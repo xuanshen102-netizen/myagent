@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from openai import (
     UnprocessableEntityError,
 )
 
-from myagent.providers.base import BaseProvider, Message, ModelResponse
+from myagent.providers.base import BaseProvider, Message, ModelResponse, ProviderError
 from myagent.providers.base import ToolCall
 
 
@@ -29,12 +30,16 @@ class OpenAIProvider(BaseProvider):
         base_url: str | None = None,
         api_mode: str = "responses",
         debug_dir: Path | None = None,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.5,
     ) -> None:
         super().__init__(model=model)
         self.api_key = api_key
         self.base_url = base_url
         self.api_mode = api_mode
         self.debug_dir = debug_dir
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             client_kwargs["base_url"] = base_url
@@ -45,65 +50,137 @@ class OpenAIProvider(BaseProvider):
         messages: list[Message],
         tools: list[dict[str, Any]],
     ) -> ModelResponse:
-        try:
-            if self.api_mode == "responses":
-                response = self.client.responses.create(
-                    model=self.model,
-                    input=self._build_input(messages),
-                    tools=self._build_tools(tools),
+        attempts = 0
+        started_at = time.perf_counter()
+        while True:
+            attempts += 1
+            try:
+                response = self._perform_request(messages, tools)
+                response.metadata.setdefault("attempts", attempts)
+                response.metadata.setdefault(
+                    "provider_latency_ms",
+                    round((time.perf_counter() - started_at) * 1000, 3),
                 )
-                self._write_debug_dump("responses", response)
-                return self._parse_response(response)
-
-            if self.api_mode == "chat":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=self._build_chat_messages(messages),
-                    tools=self._build_chat_tools(tools),
+                response.metadata.setdefault("api_mode", self.api_mode)
+                return response
+            except Exception as exc:
+                provider_error = self._map_exception(exc, attempts)
+                if provider_error.retryable and attempts <= self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * attempts)
+                    continue
+                return ModelResponse(
+                    text=provider_error.message,
+                    provider_error=provider_error,
+                    metadata={
+                        "attempts": attempts,
+                        "provider_latency_ms": round((time.perf_counter() - started_at) * 1000, 3),
+                        "api_mode": self.api_mode,
+                    },
                 )
-                self._write_debug_dump("chat", response)
-                return self._parse_chat_response(response)
 
-            raise ValueError(f"Unsupported OpenAI API mode: {self.api_mode}")
-        except (AuthenticationError, PermissionDeniedError):
-            return ModelResponse(
-                text=(
+    def _perform_request(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]],
+    ) -> ModelResponse:
+        if self.api_mode == "responses":
+            response = self.client.responses.create(
+                model=self.model,
+                input=self._build_input(messages),
+                tools=self._build_tools(tools),
+            )
+            self._write_debug_dump("responses", response)
+            return self._parse_response(response)
+
+        if self.api_mode == "chat":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self._build_chat_messages(messages),
+                tools=self._build_chat_tools(tools),
+            )
+            self._write_debug_dump("chat", response)
+            return self._parse_chat_response(response)
+
+        raise ValueError(f"Unsupported OpenAI API mode: {self.api_mode}")
+
+    def _map_exception(self, exc: Exception, attempts: int) -> ProviderError:
+        if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+            return ProviderError(
+                error_type="authentication_error",
+                message=(
                     "Authentication failed for the configured API provider. "
                     "Check OPENAI_API_KEY and provider account permissions."
-                )
+                ),
+                retryable=False,
+                metadata={"attempts": attempts},
             )
-        except RateLimitError:
-            return ModelResponse(
-                text=(
+        if isinstance(exc, RateLimitError):
+            return ProviderError(
+                error_type="rate_limit",
+                message=(
                     "The API request was rate-limited or rejected for quota reasons. "
                     "Check provider quota, billing, or retry later."
-                )
+                ),
+                retryable=True,
+                metadata={"attempts": attempts},
             )
-        except (BadRequestError, UnprocessableEntityError) as exc:
-            return ModelResponse(text=f"The API rejected the request as invalid: {exc}")
-        except NotFoundError as exc:
-            return ModelResponse(
-                text=(
+        if isinstance(exc, (BadRequestError, UnprocessableEntityError)):
+            return ProviderError(
+                error_type="invalid_request",
+                message=f"The API rejected the request as invalid: {exc}",
+                retryable=False,
+                metadata={"attempts": attempts},
+            )
+        if isinstance(exc, NotFoundError):
+            return ProviderError(
+                error_type="not_found",
+                message=(
                     f"The configured model or endpoint was not found: {exc}. "
                     "Check MYAGENT_MODEL and MYAGENT_OPENAI_BASE_URL."
-                )
+                ),
+                retryable=False,
+                metadata={"attempts": attempts},
             )
-        except (APIConnectionError, APITimeoutError):
-            return ModelResponse(
-                text=(
+        if isinstance(exc, (APIConnectionError, APITimeoutError)):
+            return ProviderError(
+                error_type="connection_error",
+                message=(
                     "The API request could not reach the provider or timed out. "
                     "Check network access and MYAGENT_OPENAI_BASE_URL."
-                )
+                ),
+                retryable=True,
+                metadata={"attempts": attempts},
             )
-        except APIStatusError as exc:
-            return ModelResponse(text=f"The provider returned an API error: {exc}")
-        except json.JSONDecodeError as exc:
-            return ModelResponse(
-                text=(
+        if isinstance(exc, APIStatusError):
+            return ProviderError(
+                error_type="api_status_error",
+                message=f"The provider returned an API error: {exc}",
+                retryable=False,
+                metadata={"attempts": attempts},
+            )
+        if isinstance(exc, json.JSONDecodeError):
+            return ProviderError(
+                error_type="invalid_tool_arguments",
+                message=(
                     "The model returned tool arguments that were not valid JSON. "
                     f"Raw parser error: {exc}"
-                )
+                ),
+                retryable=False,
+                metadata={"attempts": attempts},
             )
+        if isinstance(exc, ValueError):
+            return ProviderError(
+                error_type="configuration_error",
+                message=str(exc),
+                retryable=False,
+                metadata={"attempts": attempts},
+            )
+        return ProviderError(
+            error_type="unknown_provider_error",
+            message=f"Unexpected provider error: {exc}",
+            retryable=False,
+            metadata={"attempts": attempts},
+        )
 
     def _build_input(self, messages: list[Message]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -254,6 +331,7 @@ class OpenAIProvider(BaseProvider):
         return ModelResponse(
             text=final_text,
             tool_calls=tool_calls,
+            metadata={},
         )
 
     def _parse_chat_response(self, response: Any) -> ModelResponse:
@@ -298,7 +376,7 @@ class OpenAIProvider(BaseProvider):
                 "with the selected API mode."
             )
 
-        return ModelResponse(text=final_text, tool_calls=tool_calls)
+        return ModelResponse(text=final_text, tool_calls=tool_calls, metadata={})
 
     def _extract_text_fallback(self, response: Any) -> list[str]:
         payload = self._to_plain_data(response)

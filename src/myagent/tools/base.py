@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from myagent.providers.base import ToolResult
 
-ToolHandler = Callable[[dict[str, Any]], str]
+ToolHandler = Callable[[dict[str, Any]], ToolResult]
 
 
 @dataclass(slots=True)

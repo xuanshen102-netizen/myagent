@@ -12,9 +12,17 @@ class EventLogger:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def log(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    def log(
+        self,
+        session_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        trace_id: str | None = None,
+    ) -> None:
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": trace_id,
             "event": event_type,
             "payload": self._normalize(payload),
         }
