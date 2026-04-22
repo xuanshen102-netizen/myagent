@@ -5,7 +5,7 @@
 - 项目骨架与 Conda 环境搭建
 - CLI Agent 内核
 - 会话持久化
-- 内置工具：`list_dir`、`read_file`、`run_command`
+- 内置工具：`list_dir`、`repo_search`、`read_file`、`run_command`
 - 结构化工具结果模型
 - 更严格的 shell 命令安全策略
 - OpenAI provider 集成
@@ -14,32 +14,25 @@
 - 结构化 provider 错误模型
 - 有界 provider retry / backoff
 - runtime logging 与原始 provider dump
-- memory v1.5：摘要、事实、去重与选择性注入
+- memory v2：增量摘要、事实提取、相关性检索、task memory 与动态注入
+- 最小长期记忆：项目级稳定事实与任务结论沉淀
+- 仓库问答闭环：`repo_search -> read_file -> synthesize`
+- skill runtime：`SKILL.md` 发现、自动选择、惰性加载、prompt 注入
 - 最小 `stdio` MCP 接入
+- 最小 HTTP API
 - provider 兼容性调试脚本
 - 真实调用 smoke 脚本
 - 回归测试套件
 
 ## 近期
 
-1. 增加 HTTP API：
-   - 基础 chat 接口
-   - session 查询接口
-   - 健康检查接口
-2. 扩展 MCP：
-   - 多 MCP server 支持
-   - 更清晰的命名空间管理
-   - 更好的错误与超时日志
-3. 改进 memory：
-   - 更明确的检索策略
-   - 更稳定的摘要刷新策略
-   - 更好的事实筛选
-4. 使用真实 provider 跑 `scripts/smoke_agent_tasks.py`，检查失败模式。
-5. 根据真实日志继续调整 prompt 和工具行为。
+1. 使用真实 provider 跑 `scripts/smoke_agent_tasks.py`，检查失败模式。
+2. 根据真实日志继续调整 prompt 和输出格式。
+3. 完成 README、使用手册和 demo 场景收尾。
 
 ## 后续
 
-1. 增加更丰富的 memory 检索与 consolidation。
-2. 增加 plugin / skill 加载模型。
-3. 在 API 稳定后再加 channel 集成。
-4. 根据实际任务需要再考虑 multi-agent 或 workflow orchestration。
+1. 增加更丰富的 memory consolidation 与长期检索。
+2. 增加更完整的 provider telemetry 与 MCP 协议面。
+3. 增加更强的 skill 资源加载、隔离与版本治理。
+4. 在 API 稳定后再加 channel 集成。

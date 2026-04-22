@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 myagent = "myagent.cli:main"
+myagent-api = "myagent.api:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

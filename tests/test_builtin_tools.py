@@ -50,3 +50,29 @@ def test_run_command_allows_safe_readonly_commands() -> None:
 
     assert result.ok
     assert "exit_code=0" in result.content
+
+
+def test_repo_search_finds_files_by_name_and_content() -> None:
+    workspace = Path(".data") / "test-tools-repo-search" / str(uuid4())
+    (workspace / "src").mkdir(parents=True, exist_ok=True)
+    (workspace / "README.md").write_text("This project is a local coding assistant.", encoding="utf-8")
+    (workspace / "src" / "memory.py").write_text(
+        "class MemoryManager:\n    pass\n# project memory consolidation\n",
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    for tool in build_builtin_tools(workspace):
+        registry.register(tool)
+
+    filename_match = registry.execute("repo_search", {"query": "memory", "mode": "filename"})
+    content_match = registry.execute("repo_search", {"query": "coding assistant", "mode": "content"})
+
+    assert filename_match.ok
+    assert "src/memory.py" in filename_match.content
+    assert filename_match.structured_content is not None
+    assert filename_match.structured_content["matches"][0]["path"] == "src/memory.py"
+
+    assert content_match.ok
+    assert "README.md" in content_match.content
+    assert "snippet=" in content_match.content

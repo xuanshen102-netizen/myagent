@@ -8,11 +8,13 @@
 - OpenAI 兼容模型接入
 - 带安全限制的本地工具调用
 - 会话持久化
-- memory v1.5
+- memory v2 + 最小长期记忆
+- `SKILL.md` skill runtime
 - runtime trace 与调试日志
 - 基于 `stdio` 的最小 MCP 工具接入
+- 最小 HTTP API
 
-项目目前仍然是“内核优先、本地优先”的形态，还不是完整的 `nanobot` 风格平台；暂时还没有 channel、HTTP API、插件系统和后台调度。
+项目目前仍然是“内核优先、本地优先”的形态，还不是完整的 `nanobot` 风格平台；暂时还没有 channel、插件系统和后台调度。
 
 ## 当前能力
 
@@ -36,6 +38,7 @@
 
 - 内置工具：
   - `list_dir`
+  - `repo_search`
   - `read_file`
   - `run_command`
 - 文件访问限定在当前工作区
@@ -51,19 +54,46 @@
 
 - 会话消息持久化
 - 在 `.data/memory/` 下保存 memory 快照
-- 根据最近对话生成摘要
-- 从对话中提取简单事实
+- 增量更新对话摘要
+- 从对话中提取稳定事实
+- 维护 task memory：当前任务、已完成步骤、待办与阻塞
 - 对事实去重
-- 选择性地把事实注入后续对话上下文
+- 按当前用户问题做相关性检索
+- 动态注入相关摘要与事实到后续对话上下文
+- 项目级长期记忆：跨 session 共享稳定事实与任务结论
+
+### 仓库问答闭环
+
+- `repo_search`：按文件名和文件内容搜索候选文件
+- `read_file`：精读候选文件
+- Agent prompt 明确约束“search -> read -> synthesize”
+- 适合做仓库结构理解、入口定位、模块解释与实现问答
+
+### Skill
+
+- 内置 `repo_explainer`、`code_debugger`、`feature_implementer`
+- 支持显式指定 skill
+- 支持基于 query 的简单自动选择
+- skill 通过 `SKILL.md` 定义任务策略、工具偏好与输出风格
+- 支持内置 skill 目录与项目级 `.myagent/skills/`
+- 支持通过 `MYAGENT_SKILL_DIRS` 追加用户级 skill 目录
 
 ### MCP
 
 - 最小 `stdio` MCP client
+- 支持多个 MCP server 配置与聚合加载
 - 支持：
   - `initialize`
   - `tools/list`
   - `tools/call`
-- MCP 工具会以 `mcp__<tool_name>` 的形式暴露给 Agent
+- MCP 工具会以 `mcp__<server_name>__<tool_name>` 的形式暴露给 Agent
+
+### HTTP API
+
+- `GET /health`
+- `POST /chat`
+- `GET /sessions/{id}`
+- 复用现有 kernel、memory 与 session
 
 ### 可观测性
 
@@ -84,11 +114,12 @@
 │  ├─ tools/        # 内置工具与工具加载
 │  ├─ cli.py        # 命令行入口
 │  ├─ config.py     # 环境变量配置
-│  ├─ memory.py     # memory v1.5
+│  ├─ memory.py     # memory v2
 │  └─ mcp.py        # 最小 stdio MCP client
 ├─ scripts/
 ├─ tests/
 ├─ .env.example
+├─ USER_MANUAL.md
 └─ pyproject.toml
 ```
 
@@ -147,11 +178,29 @@ myagent "读取 README.md 并总结这个项目"
 myagent
 ```
 
+### 4. 运行 HTTP API
+
+```powershell
+myagent-api
+```
+
+默认监听：
+
+```text
+http://127.0.0.1:8000
+```
+
 ## MCP 配置
 
-当前已经支持最小的 `stdio` MCP 接入。
+当前已经支持最小的 `stdio` MCP 接入，并支持多 MCP server 聚合。
 
-在 `.env` 中加入：
+推荐使用多 MCP 配置：
+
+```dotenv
+MYAGENT_MCP_SERVERS=[{"name":"repo","command":"python","args":["path\\to\\repo_mcp.py"],"timeout_seconds":20},{"name":"browser","command":"python","args":["path\\to\\browser_mcp.py"],"timeout_seconds":20}]
+```
+
+如果你只想继续使用兼容的单 MCP 配置，也可以保留：
 
 ```dotenv
 MYAGENT_MCP_ENABLED=1
@@ -163,13 +212,13 @@ MYAGENT_MCP_TIMEOUT_SECONDS=20
 如果你还想保留内置工具，可以继续配置：
 
 ```dotenv
-MYAGENT_ENABLED_BUILTIN_TOOLS=list_dir,read_file,run_command
+MYAGENT_ENABLED_BUILTIN_TOOLS=list_dir,repo_search,read_file,run_command
 ```
 
 加载后的 MCP 工具名格式为：
 
 ```text
-mcp__tool_name
+mcp__server_name__tool_name
 ```
 
 当前 MCP 范围：
@@ -177,15 +226,76 @@ mcp__tool_name
 - 只支持 `stdio` transport
 - 只接工具能力
 - 还不支持 HTTP/SSE transport
-- 还不支持多 MCP server 聚合
 - 还不支持 resources / prompts / sampling
+
+## Skill 配置
+
+内置 skill 使用 `SKILL.md` 目录结构定义，运行时会做发现和惰性加载。
+
+默认查找位置：
+
+- 内置：`src/myagent/builtin_skills/`
+- 项目级：`.myagent/skills/`
+- 用户级：`MYAGENT_SKILL_DIRS`
+
+项目级 skill 结构示例：
+
+```text
+.myagent/
+└─ skills/
+   └─ repo_explainer/
+      └─ SKILL.md
+```
+
+`SKILL.md` 示例：
+
+```md
+---
+name: repo_explainer
+description: Explain repository structure.
+triggers: [repo, 仓库]
+preferred-tools: [list_dir, read_file]
+response-style: Return a concise overview.
+---
+
+Inspect the repository before concluding.
+Summarize the layout, entrypoints, and key modules.
+```
+
+如果你要追加用户级 skill 目录，可以在 `.env` 里配置：
+
+```dotenv
+MYAGENT_SKILL_DIRS=D:\skills;D:\team-skills
+```
+
+## HTTP API
+
+当前 API 为最小可用版本。
+
+接口：
+
+- `GET /health`
+- `POST /chat`
+- `GET /sessions/{id}`
+
+示例：
+
+```powershell
+curl http://127.0.0.1:8000/health
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"demo\",\"message\":\"读取 README.md 并总结这个项目\"}"
+```
 
 ## 运行时文件
 
 运行产生的数据都写在 `.data/` 下：
 
 - `.data/sessions/`：会话持久化
-- `.data/memory/`：memory 快照
+- `.data/memory/`：session memory 快照与项目级长期记忆
 - `.data/logs/`：每个 session 的 JSONL 事件日志
 - `.data/provider-debug/`：最近一次 provider 原始响应
 - `.data/debug-openai-response.json`：兼容性调试脚本输出
@@ -214,6 +324,7 @@ python scripts\smoke_agent_tasks.py
 
 ```powershell
 myagent "列出当前目录并说明项目结构"
+myagent "搜索 build_server 在哪里定义，并总结实现"
 myagent "读取 README.md 并总结这个项目"
 myagent "执行 python --version 并解释结果"
 ```
@@ -222,11 +333,10 @@ myagent "执行 python --version 并解释结果"
 
 目前仍未实现：
 
-- HTTP API
 - channel 接入
-- plugin / skill 系统
+- 更强的 skill 资源加载、隔离与版本治理
 - 后台调度与主动执行
-- 更高级的 memory 检索与 consolidation
+- 更完整的 memory consolidation
 - `mock` 与 OpenAI-compatible 之外的多 provider 生态
 - 更完整的 MCP 协议面
 
@@ -236,3 +346,7 @@ myagent "执行 python --version 并解释结果"
 
 - [PROJECT_STATUS.md](D:/Projects/myagent/PROJECT_STATUS.md)
 - [ROADMAP.md](D:/Projects/myagent/ROADMAP.md)
+- [KERNEL_STATUS.md](D:/Projects/myagent/KERNEL_STATUS.md)
+- [FEATURE_STATUS.md](D:/Projects/myagent/FEATURE_STATUS.md)
+- [DEVELOPMENT_TRACKER.md](D:/Projects/myagent/DEVELOPMENT_TRACKER.md)
+- [USER_MANUAL.md](D:/Projects/myagent/USER_MANUAL.md)
