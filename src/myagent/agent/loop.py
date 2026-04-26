@@ -25,12 +25,21 @@ class ToolExecutionRecord:
 
 
 @dataclass(slots=True)
+class ReactStep:
+    round_index: int
+    thought_summary: str
+    actions: list[dict[str, object]]
+    observations: list[dict[str, object]]
+
+
+@dataclass(slots=True)
 class TurnContext:
     session_id: str
     user_text: str
     active_skill: str | None
     tool_history: dict[str, int]
     executed_tools: list[ToolExecutionRecord]
+    react_steps: list[ReactStep]
     trace_id: str
     provider_rounds: int = 0
     tool_failures: int = 0
@@ -62,6 +71,7 @@ class AgentKernel:
             active_skill=active_skill.name if active_skill else None,
             tool_history={},
             executed_tools=[],
+            react_steps=[],
             trace_id=uuid4().hex,
         )
         turn_started_at = time.perf_counter()
@@ -109,9 +119,30 @@ class AgentKernel:
                 },
                 trace_id=turn.trace_id,
             )
+            thought_summary = self._summarize_thought(response)
             if not response.tool_calls:
                 assistant_text = response.text.strip() or "(empty response)"
-                messages.append(Message(role="assistant", content=assistant_text))
+                turn.react_steps.append(
+                    ReactStep(
+                        round_index=round_index,
+                        thought_summary=thought_summary,
+                        actions=[],
+                        observations=[],
+                    )
+                )
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=assistant_text,
+                        metadata={
+                            "react": {
+                                "phase": "final_answer",
+                                "thought_summary": thought_summary,
+                                "round": round_index,
+                            }
+                        },
+                    )
+                )
                 self.sessions.save(session_id, messages)
                 snapshot = self._update_memory(session_id, messages, active_skill=turn.active_skill)
                 self._log(
@@ -127,6 +158,7 @@ class AgentKernel:
                             if response.provider_error
                             else None
                         ),
+                        "react_steps": [self._react_step_payload(step) for step in turn.react_steps],
                         "memory_summary_present": bool(snapshot and snapshot.summary),
                         "memory_fact_count": len(snapshot.facts) if snapshot else 0,
                         "turn_latency_ms": round((time.perf_counter() - turn_started_at) * 1000, 3),
@@ -141,9 +173,20 @@ class AgentKernel:
                     role="assistant",
                     content=response.text or "",
                     tool_calls=response.tool_calls,
+                    metadata={
+                        "react": {
+                            "phase": "thought_action",
+                            "thought_summary": thought_summary,
+                            "round": round_index,
+                            "actions": [
+                                {"tool_name": call.name, "arguments": call.arguments}
+                                for call in response.tool_calls
+                            ],
+                        }
+                    },
                 )
             )
-            self._apply_tool_calls(turn, messages, response, round_index)
+            self._apply_tool_calls(turn, messages, response, round_index, thought_summary)
             if (
                 turn.tool_failures >= self.max_tool_failures_per_turn
                 or turn.consecutive_tool_failures >= self.max_consecutive_tool_errors
@@ -162,6 +205,7 @@ class AgentKernel:
                 "provider_rounds": turn.provider_rounds,
                 "tool_call_count": len(turn.executed_tools),
                 "tool_failures": turn.tool_failures,
+                "react_steps": [self._react_step_payload(step) for step in turn.react_steps],
                 "memory_summary_present": bool(snapshot and snapshot.summary),
                 "memory_fact_count": len(snapshot.facts) if snapshot else 0,
                 "turn_latency_ms": round((time.perf_counter() - turn_started_at) * 1000, 3),
@@ -201,7 +245,17 @@ class AgentKernel:
         messages: list[Message],
         response: ModelResponse,
         round_index: int,
+        thought_summary: str,
     ) -> None:
+        step = ReactStep(
+            round_index=round_index,
+            thought_summary=thought_summary,
+            actions=[
+                {"tool_name": call.name, "arguments": call.arguments}
+                for call in response.tool_calls
+            ],
+            observations=[],
+        )
         for call in response.tool_calls:
             tool_started_at = time.perf_counter()
             signature = self._tool_signature(call.name, call.arguments)
@@ -231,6 +285,15 @@ class AgentKernel:
             else:
                 turn.tool_failures += 1
                 turn.consecutive_tool_failures += 1
+            observation_summary = self._summarize_observation(call.name, result)
+            step.observations.append(
+                {
+                    "tool_name": call.name,
+                    "status": result.status,
+                    "summary": observation_summary,
+                    "error_type": result.error_type,
+                }
+            )
             self._log(
                 turn.session_id,
                 "tool_result",
@@ -241,6 +304,7 @@ class AgentKernel:
                     "status": result.status,
                     "error_type": result.error_type,
                     "metadata": result.metadata,
+                    "observation_summary": observation_summary,
                     "duplicate_count": turn.tool_history[signature],
                     "round": round_index,
                     "tool_latency_ms": round((time.perf_counter() - tool_started_at) * 1000, 3),
@@ -254,11 +318,60 @@ class AgentKernel:
                     name=call.name,
                     tool_call_id=call.id,
                     tool_result=result,
+                    metadata={
+                        "react": {
+                            "phase": "observation",
+                            "round": round_index,
+                            "tool_name": call.name,
+                            "observation_summary": observation_summary,
+                            "status": result.status,
+                            "error_type": result.error_type,
+                        }
+                    },
                 )
             )
+        turn.react_steps.append(step)
+        self._log(
+            turn.session_id,
+            "react_step",
+            self._react_step_payload(step),
+            trace_id=turn.trace_id,
+        )
 
     def _tool_signature(self, name: str, arguments: dict[str, object]) -> str:
         return f"{name}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
+
+    def _summarize_thought(self, response: ModelResponse) -> str:
+        text = (response.text or "").strip()
+        if response.tool_calls:
+            if text:
+                return text[:240]
+            tool_names = ", ".join(call.name for call in response.tool_calls)
+            return f"Need external observations before answering; next actions: {tool_names}."
+        if text:
+            return "Enough information is available to answer directly."
+        if response.provider_error is not None:
+            return "Provider returned an error instead of a usable answer."
+        return "No further action was proposed."
+
+    def _summarize_observation(self, tool_name: str, result: ToolResult) -> str:
+        if result.ok:
+            preview = result.content.strip().replace("\n", " ")
+            if preview:
+                return f"{tool_name} succeeded: {preview[:180]}"
+            return f"{tool_name} succeeded with an empty textual result."
+        preview = result.content.strip().replace("\n", " ")
+        if preview:
+            return f"{tool_name} failed ({result.error_type or 'error'}): {preview[:180]}"
+        return f"{tool_name} failed with error type {result.error_type or 'unknown_error'}."
+
+    def _react_step_payload(self, step: ReactStep) -> dict[str, object]:
+        return {
+            "round": step.round_index,
+            "thought_summary": step.thought_summary,
+            "actions": step.actions,
+            "observations": step.observations,
+        }
 
     def _memory_prompt(self, session_id: str, user_text: str) -> str | None:
         if self.memory is None:

@@ -109,6 +109,7 @@ class Message:
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_result: ToolResult | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +119,7 @@ class Message:
             "tool_call_id": self.tool_call_id,
             "tool_calls": [asdict(item) for item in self.tool_calls],
             "tool_result": self.tool_result.to_dict() if self.tool_result else None,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -133,6 +135,7 @@ class Message:
                 if data.get("tool_result") is not None
                 else None
             ),
+            metadata=data.get("metadata", {}),
         )
 
 

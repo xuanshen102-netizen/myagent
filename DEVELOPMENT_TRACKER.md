@@ -1,28 +1,23 @@
-# 开发跟进文档
+# 开发跟踪文档
 
 ## 文档目的
 
-这份文档用于持续跟进 `myagent` 从“本地 Agent 内核”演进到“本地优先代码仓库智能助手”的开发进度。
+这份文档用于持续跟踪 `myagent` 从本地 Agent Runtime 演化到 Coding Agent 的进度。
 
-建议每次完成一个明确阶段后，更新：
+建议每完成一个明确阶段后更新：
 
 - 当前阶段
 - 已完成项
-- 阻塞项
+- 风险 / 阻塞
 - 下一步
 
 ## 项目总目标
 
-做出一个可以写进简历、具有明确技术难点的项目：
+做出一个能够写进简历、具备清晰技术深度、并且可以持续演化为 Coding Agent 的项目。
 
-**本地优先的代码仓库智能助手**
+当前统一定位：
 
-要求：
-
-- 能运行
-- 能演示
-- 有真实技术点
-- 有明确工程边界
+**本地优先、面向代码仓库的 ReAct 风格 Agent Runtime。**
 
 ## 里程碑
 
@@ -44,62 +39,66 @@
 
 完成内容：
 
-- 结构化 provider error
-- provider retry / backoff
-- 结构化 tool result
+- provider error model
+- retry / backoff
+- structured tool result
 - tool failure budget
 - runtime trace
 - memory v2
 - 最小 MCP 接入
 
-### Milestone 2：简历版项目
+### Milestone 2：仓库助手可用版
 
-状态：**进行中**
+状态：**已完成**
 
-目标：
-
-- 形成“代码仓库智能助手”的明确产品形态
-- 在现有 CLI 基础上提供更稳定的服务入口
-- 增强 MCP 与 memory，形成更强展示价值
-
-当前建议范围：
-
-- 最小长期记忆
-- 仓库问答闭环
-- 输出与演示收尾
-
-当前已新增：
+完成内容：
 
 - 最小 HTTP API
 - 多 MCP server 支持
-- Memory v2
 - 最小长期记忆
-- `repo_search` 与仓库问答闭环
+- `repo_search -> read_file -> synthesize`
 - `SKILL.md` skill runtime
 
-### Milestone 3：平台化扩展
+### Milestone 3：ReAct 第一阶段
+
+状态：**已完成**
+
+完成内容：
+
+- prompt 层加入 ReAct-style 执行约束
+- runtime 层增加 `thought_summary`
+- assistant / tool / final answer 写入 `react` 元数据
+- 日志层新增 `react_step`
+- 回归测试覆盖 ReAct 轨迹
+
+验收结论：
+
+- 当前已不是“隐式工具循环”
+- 已成为“具备显式 ReAct 运行轨迹的工具型 Agent Runtime”
+
+### Milestone 4：Coding Agent 演化
 
 状态：**未开始**
 
 目标：
 
-- channel
-- plugin / skill
-- 更完整 MCP
-- 后台执行
+- `inspect / edit / verify / done` 状态机
+- 文件编辑工具
+- 验证工具
+- Git 感知
+- coding delivery output
 
 ## 当前阶段判断
 
 当前所处阶段：
 
-**Milestone 2：简历版项目**
+**Milestone 3：ReAct 第一阶段已完成**
 
 当前结论：
 
-- 内核已经足够支撑一个严肃的小型项目
-- 现在已经具备最小 API 化能力
-- 已完成“最小长期记忆”和“仓库问答闭环”，项目已进入收尾阶段
-- 不建议马上扩散到 channel / multi-agent / UI
+- 内核能力已经足够支撑“仓库理解助手”
+- 现在不应该继续把重点放在聊天或文档包装上
+- 下一步应该直接推进 coding task loop
 
 ## 当前已完成清单
 
@@ -110,116 +109,64 @@
 - memory v2
 - 最小长期记忆
 - builtin tool safety policy
-- repo_search / file selection / answer synthesis 闭环
+- 仓库问答闭环
 - MCP 最小版
 - runtime trace
-- 完整测试覆盖到当前核心能力
+- ReAct step trace
 
-## 当前阻塞 / 风险
+## 当前风险 / 阻塞
 
-### 1. 只有 CLI，没有服务化入口
-
-状态：**已解决**
-
-说明：
-
-- 已支持最小 HTTP API
-- 后续重点转为增强 API，而不是从零开始做 API
-
-### 2. Memory 还缺更完整的 consolidation 与长期检索
+### 1. 还不是 Coding Agent
 
 影响：
 
-- 当前已具备最小长期记忆，但复杂任务下长期压缩与检索仍然有限
+- 只能看代码、查代码、解释代码
+- 还不能稳定完成“改代码并验证”的闭环
+
+### 2. 缺少代码编辑和验证能力
+
+影响：
+
+- 现阶段无法进入真正的 coding task execution
+
+### 3. README 等外层文档存在过时和编码噪声
+
+影响：
+
+- 会误导另一个开发环境上的协作者
+- 会影响项目对外表述一致性
 
 ## 下一阶段开发顺序
 
-建议严格按这个顺序推进：
+严格建议按这个顺序推进：
 
-1. 输出格式稳定化与 README / 使用手册收尾
-2. 更完整的 memory consolidation / 长期检索
-3. Skill 资源治理 / Channel / UI
+1. 补齐核心文档
+2. 建立 coding task phases
+3. 增加文件编辑工具
+4. 增加验证工具
+5. 增加 Git 只读工具
 
-## 下一阶段验收标准
-
-### HTTP API 验收
-
-状态：**已完成**
-
-完成结果：
-
-- 已支持 HTTP 发起 agent 请求
-- 已支持 session id
-- 已支持返回最终回答
-- 已支持健康检查
-
-### 多 MCP server 验收
-
-状态：**已完成**
-
-完成结果：
-
-- 已支持多个 MCP server 配置
-- 已支持同时加载多个 MCP tools
-- 已有明确命名空间
-- 已支持冲突校验
-
-### Memory v2 验收
-
-状态：**已完成**
-
-完成结果：
-
-- 已支持显式相关性检索
-- 已支持更稳定的摘要更新策略
-- 已支持动态 memory 注入
-- 已支持 task memory
-
-### 最小长期记忆验收
-
-状态：**已完成**
-
-完成结果：
-
-- 已支持项目级长期记忆文件
-- 已支持跨 session 复用稳定事实
-- 已支持按 query 注入长期任务结论
-
-### 仓库问答闭环验收
-
-状态：**已完成**
-
-完成结果：
-
-- 已支持 `repo_search`
-- 已支持候选文件选择
-- 已支持 search -> read -> synthesize 闭环
-
-## 每轮开发建议记录格式
-
-建议后续每次迭代都按下面补充：
+## 最近一次迭代记录
 
 ### 迭代日期
 
-- YYYY-MM-DD
+- 2026-04-26
 
 ### 本轮完成
 
-- ...
+- 将 agent loop 演化为 ReAct-style runtime
+- 增加 `thought_summary / actions / observations`
+- 在日志中记录 `react_step`
+- 增加对应测试
+- 同步核心状态文档
 
 ### 本轮未完成
 
-- ...
-
-### 风险 / 问题
-
-- ...
+- README 全量重写
+- coding task state machine
+- 文件编辑工具
+- structured validation tools
 
 ### 下一步
 
-- ...
-
-## 最近一次状态更新时间
-
-- 时间：2026-04-22
-- 当前建议：**项目第一版核心功能已经成型，下一步优先做文档、演示和输出格式收尾；不要再扩到 channel、多 agent 或重型框架。**
+- 开始实现 coding ReAct agent 的 `inspect / edit / verify` 基础状态流

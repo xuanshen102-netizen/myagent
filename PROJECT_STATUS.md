@@ -2,26 +2,29 @@
 
 ## 当前状态
 
-`myagent` 现在已经不是单纯的项目骨架，而是一个具备强化内核的本地 Agent。
+`myagent` 现在已经不是简单的本地问答脚手架，而是一个可运行的本地 Agent 系统。
 
-目前已经实现：
+当前更准确的定位是：
+
+**本地优先、面向代码仓库场景、具备显式 ReAct 运行轨迹的工具型 Agent。**
+
+## 当前已实现
 
 - CLI 入口，支持单次调用和交互模式
-- 会话持久化
+- session 持久化
 - 结构化工具注册与内置工具
-- OpenAI 兼容 provider，支持 `responses` 和 `chat`
-- 结构化 provider 错误
-- 有界 retry / backoff
-- 结构化工具结果
-- 更严格的 shell 命令策略
-- 每个 session 的 JSONL 运行日志
+- OpenAI-compatible provider，支持 `responses` 和 `chat`
+- provider error 结构化建模
+- retry / backoff
+- runtime JSONL 日志
 - provider 原始响应 dump
-- memory v2：增量摘要、事实提取、相关性检索、task memory 与最小长期记忆
+- memory v2：summary、facts、task memory、最小长期记忆
 - skill runtime：`SKILL.md` 发现、自动选择、prompt 注入
-- 基于 `stdio` 的最小 MCP 工具接入
-- 多 MCP server 聚合与命名空间
+- 基于 `stdio` 的 MCP 工具接入
+- 多 MCP server 聚合
 - 最小 HTTP API
-- smoke 脚本与回归测试
+- ReAct-style runtime trace：`thought_summary / actions / observations / react_step`
+- 回归测试
 
 ## 核心能力
 
@@ -31,133 +34,101 @@
 - 重复工具调用保护
 - 单轮工具失败预算
 - 连续工具失败保护
-- 运行时日志中记录结构化工具执行信息
+- ReAct step 记录
+- 运行时日志记录工具和 provider 执行轨迹
 
 ### Provider 层
 
-- `mock` provider 用于本地验证
+- `mock` provider
 - OpenAI-compatible provider
-- 可配置 `responses` / `chat` API 模式
-- provider 错误结构化分类
-- 对可重试错误做 retry
-- 原始 payload dump 便于兼容性排查
+- `responses` / `chat` API 模式切换
+- provider 错误分类
+- retry
+- 原始 payload dump
 
 ### 工具层
 
-- 内置工具：`list_dir`、`repo_search`、`read_file`、`run_command`
+- builtin tools：`list_dir`、`repo_search`、`read_file`、`run_command`
 - 文件访问受工作区限制
-- 命令执行有 allow/block 策略
-- 结构化工具结果对象，包含：
-  - `status`
-  - `content`
-  - `error_type`
-  - `metadata`
-  - 可选 structured payload
+- shell allow/block 策略
+- `ToolResult` 结构化返回
 
 ### Memory
 
 - 会话消息持久化
-- `.data/memory/` 下保存 memory 快照
-- 增量更新摘要
-- 从 user / assistant 内容中提取稳定事实
-- 维护 task memory：title / status / completed / pending / blockers
-- 对事实做去重
-- 按当前 query 选择性注入相关 summary / facts
-- 项目级长期记忆文件，跨 session 复用稳定事实和任务结论
-
-### Skill
-
-- `SKILL.md` skill discovery
-- 支持显式 skill 指定
-- 支持简单自动 skill 选择
-- 支持项目级与用户级 skill 目录
-- skill 会写入 task memory
-- skill 当前只负责策略注入，不直接提供执行能力
-
-### MCP
-
-- 最小 `stdio` MCP client
-- 支持 `initialize`
-- 支持 `tools/list`
-- 支持 `tools/call`
-- MCP 工具被包装为现有 `ToolSpec`
-- 暴露给模型时使用 `mcp__<server_name>__<tool_name>` 命名
-
-### HTTP API
-
-- `GET /health`
-- `POST /chat`
-- `GET /sessions/{id}`
-- 复用现有 kernel、session 与 memory
+- memory snapshot
+- 增量 summary
+- facts 提取
+- task memory
+- query 相关性注入
+- project-level 最小长期记忆
 
 ### 可观测性
 
-- `.data/logs/` 下每个 session 的 JSONL 事件日志
-- 日志中带 `trace_id`
-- 记录 tool result 的状态和错误元数据
-- 记录 provider 错误元数据
-- 记录 provider latency / retry 信息
-- `.data/provider-debug/` 下保存最近一次 provider 原始响应
+- `.data/logs/` 下的 JSONL 日志
+- `trace_id`
+- tool/provider latency
+- provider error metadata
+- `react_step` 事件
 
-## 重要运行时文件
+## 当前是否实现了 ReAct
 
-- `.env`：本地配置，已加入 Git ignore
-- `.data/sessions/`：session transcript
-- `.data/memory/`：memory 快照
-- `.data/logs/`：运行日志
-- `.data/provider-debug/`：provider 原始响应
-- `.data/debug-openai-response.json`：兼容性调试脚本输出
+是，但要准确描述为：
+
+**已经实现了 ReAct 的第一阶段工程化版本。**
+
+目前具备：
+
+- `Thought`：用 `thought_summary` 记录当前轮意图
+- `Action`：结构化 tool calls
+- `Observation`：tool result + observation summary
+- 每轮日志化 `react_step`
+
+目前还不具备：
+
+- 显式对外展示完整 chain-of-thought
+- 编码任务状态机
+- 失败反思 / reflection 机制
 
 ## 当前限制
 
-项目目前仍然是“内核优先”的本地 Agent，还不是完整的 `nanobot` 风格平台。
+项目当前仍然不是完整的 Coding Agent。
 
-仍未完成：
+尚未完成：
 
-- channel 集成
-- 更高级的 memory consolidation
-- `mock` + OpenAI-compatible 之外的多 provider 生态
-- 后台调度与主动执行
-- 更强的 skill 资源加载、隔离与版本治理
-- 更完整的 MCP 协议面
+- 文件写入 / patch 工具
+- 测试 / lint / typecheck 验证工具
+- Git 感知
+- `inspect -> edit -> verify -> done` 任务状态机
+- 更强的长程 coding memory
+- channel / UI / multi-agent
 
-## 常用命令
+## 当前测试状态
 
-```powershell
-conda activate myagent
-python scripts\debug_openai_compat.py
-python scripts\smoke_agent_tasks.py
-python -m pytest tests -p no:cacheprovider
-myagent "列出当前目录并说明项目结构"
-myagent "读取 README.md 并总结这个项目"
-```
+本地 `myagent` 环境下已验证：
 
-## 测试覆盖
-
-当前测试覆盖：
-
-- agent loop 行为
-- 重复工具调用保护
-- 单轮工具失败预算
-- 内置工具安全行为
-- CLI / provider 配置校验
-- provider 响应解析
-- provider retry 行为
-- 结构化 provider error 行为
-- observability 日志
+- agent loop
+- ReAct 轨迹记录
+- provider 解析
 - session 持久化
-- memory 摘要与事实持久化
-- 长期记忆跨 session 检索
-- MCP 工具发现与调用
-- HTTP API 端点行为
-- 仓库搜索与仓库问答闭环
+- API 行为
 
-当前本地验证状态：
+最近一次针对 ReAct 改造的回归结果：
 
-- `65` 个测试在本地 `myagent` Conda 环境下全部通过
+- `28 passed`
 
 ## 下一步建议
 
-1. 继续增强 memory consolidation，把当前“最小长期记忆”升级为更稳定的长期检索。
-2. 在多 MCP 基础上继续补更完整的协议面与日志。
-3. 再考虑更强的 skill 资源治理，再往后是 channel。
+不要继续停留在“仓库问答助手”的层面。
+
+下一步应该直接进入 Coding Agent 演化：
+
+1. 建立编码任务阶段
+2. 增加文件编辑工具
+3. 增加验证工具
+4. 增加 Git 只读能力
+
+## 最近一次状态更新时间
+
+- 时间：2026-04-26
+- 结论：**ReAct 第一阶段已落地，项目下一阶段目标应切换为 coding ReAct agent。**

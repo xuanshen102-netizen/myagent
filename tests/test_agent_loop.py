@@ -61,10 +61,14 @@ def test_agent_kernel_injects_system_prompt_and_executes_tool_loop() -> None:
     saved = kernel.sessions.load("demo")
     assert saved[2].role == "assistant"
     assert saved[2].tool_calls[0].name == "list_dir"
+    assert saved[2].metadata["react"]["phase"] == "thought_action"
+    assert saved[2].metadata["react"]["actions"][0]["tool_name"] == "list_dir"
     assert saved[3].role == "tool"
     assert saved[3].content == "listed ."
     assert saved[3].tool_result is not None
     assert saved[3].tool_result.ok
+    assert saved[3].metadata["react"]["phase"] == "observation"
+    assert "list_dir succeeded" in saved[3].metadata["react"]["observation_summary"]
 
 
 def test_agent_kernel_injects_explicit_skill_prompt() -> None:
@@ -396,6 +400,37 @@ def test_agent_kernel_logs_trace_and_latency_fields() -> None:
     assert '"trace_id":' in log_text
     assert '"turn_latency_ms":' in log_text
     assert '"provider_latency_ms": 1.23' in log_text
+
+
+def test_agent_kernel_records_react_steps_in_logs_and_final_message() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="list_dir",
+            description="List files",
+            parameters={"type": "object"},
+            handler=lambda arguments: ToolResult.success(f"listed {arguments['path']}"),
+        )
+    )
+    provider = ScriptedProvider()
+    root = Path(".data") / "test-agent-react-trace" / str(uuid4())
+    kernel = AgentKernel(
+        provider=provider,
+        tools=registry,
+        sessions=SessionStore(root / "sessions"),
+        logger=EventLogger(root / "logs"),
+    )
+
+    result = kernel.run_once(session_id="demo", user_text="what is here?")
+    saved = kernel.sessions.load("demo")
+    log_text = (root / "logs" / "demo.jsonl").read_text(encoding="utf-8")
+
+    assert result == "The workspace inspection is complete."
+    assert saved[-1].metadata["react"]["phase"] == "final_answer"
+    assert "Enough information is available to answer directly." == saved[-1].metadata["react"]["thought_summary"]
+    assert '"event": "react_step"' in log_text
+    assert '"thought_summary": "Checking the workspace."' in log_text
+    assert '"observation_summary": "list_dir succeeded: listed ."' in log_text
 
 
 def test_agent_kernel_can_complete_repo_search_read_and_synthesize_flow() -> None:
